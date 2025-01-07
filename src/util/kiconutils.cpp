@@ -34,6 +34,7 @@ public:
 private:
     QIcon m_base;
     QHash<Qt::Corner, QIcon> m_overlays;
+    qreal m_dpr = 1.0;
 };
 
 KOverlayIconEngine::KOverlayIconEngine(const QIcon &icon, const QIcon &overlay, Qt::Corner position)
@@ -121,6 +122,8 @@ void KOverlayIconEngine::virtual_hook(int id, void *data)
 
         const QRect logicalRect(rect.x() / info->scale, rect.y() / info->scale, rect.width() / info->scale, rect.height() / info->scale);
         QPainter p(&pixmap);
+
+        m_dpr = info->scale;
         paint(&p, logicalRect, info->mode, info->state);
 
         info->pixmap = pixmap;
@@ -133,7 +136,20 @@ void KOverlayIconEngine::virtual_hook(int id, void *data)
 void KOverlayIconEngine::paint(QPainter *painter, const QRect &rect, QIcon::Mode mode, QIcon::State state)
 {
     // Paint the base icon as the first layer
-    m_base.paint(painter, rect, Qt::AlignCenter, mode, state);
+
+    QPixmap pix;
+
+    const auto availableSizes = m_base.availableSizes(mode, state);
+    if (!availableSizes.isEmpty()
+        && (availableSizes.last().width() >= rect.size().width() * m_dpr || availableSizes.last().height() >= rect.size().height() * m_dpr)) {
+        // take into account dpr when the base icon size allows it
+        pix = m_base.pixmap(rect.size() * m_dpr, m_dpr, mode, state);
+        pix.setDevicePixelRatio(m_dpr);
+    } else {
+        pix = m_base.pixmap(rect.size(), mode, state);
+    }
+
+    painter->drawPixmap(rect.topLeft(), pix);
 
     if (m_overlays.isEmpty()) {
         return;
@@ -161,7 +177,7 @@ void KOverlayIconEngine::paint(QPainter *painter, const QRect &rect, QIcon::Mode
     // Iterate over stored overlays
     QHash<Qt::Corner, QIcon>::const_iterator i = m_overlays.constBegin();
     while (i != m_overlays.constEnd()) {
-        const QPixmap overlayPixmap = i.value().pixmap(overlaySize, overlaySize, mode, state);
+        const QPixmap overlayPixmap = i.value().pixmap(QSize{overlaySize, overlaySize}, m_dpr, mode, state);
         if (overlayPixmap.isNull()) {
             ++i;
             continue;
