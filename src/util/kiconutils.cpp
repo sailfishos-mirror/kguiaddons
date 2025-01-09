@@ -118,9 +118,7 @@ void KOverlayIconEngine::virtual_hook(int id, void *data)
         pixmap.setDevicePixelRatio(info->scale);
         pixmap.fill(Qt::transparent);
 
-        QRect rect = pixmap.rect();
-
-        const QRect logicalRect(rect.x() / info->scale, rect.y() / info->scale, rect.width() / info->scale, rect.height() / info->scale);
+        const QRect logicalRect(0, 0, phyiscalSize.width() / info->scale, phyiscalSize.height() / info->scale);
         QPainter p(&pixmap);
 
         m_dpr = info->scale;
@@ -136,20 +134,36 @@ void KOverlayIconEngine::virtual_hook(int id, void *data)
 void KOverlayIconEngine::paint(QPainter *painter, const QRect &rect, QIcon::Mode mode, QIcon::State state)
 {
     // Paint the base icon as the first layer
+    auto rectPhysical = QSize{static_cast<int>(rect.width() * m_dpr), static_cast<int>(rect.height() * m_dpr)};
+    const auto pixSize = m_base.actualSize(rectPhysical, mode, state);
+    QPixmap pix = m_base.pixmap(pixSize, mode, state);
 
-    QPixmap pix;
-
-    const auto availableSizes = m_base.availableSizes(mode, state);
-    if (!availableSizes.isEmpty()
-        && (availableSizes.last().width() >= rect.size().width() * m_dpr || availableSizes.last().height() >= rect.size().height() * m_dpr)) {
-        // take into account dpr when the base icon size allows it
-        pix = m_base.pixmap(rect.size() * m_dpr, m_dpr, mode, state);
-        pix.setDevicePixelRatio(m_dpr);
-    } else {
-        pix = m_base.pixmap(rect.size(), mode, state);
+    // in case the output image is too big to fit in logical size
+    // (or bigger than the physial size)
+    // Make sure the pixmap fits within at most the phyiscalSize
+    // scaling it up or down
+    if (pix.height() > rect.height() || pix.width() > rect.width()) {
+        pix = pix.scaled(rectPhysical, Qt::KeepAspectRatio);
     }
 
-    painter->drawPixmap(rect.topLeft(), pix);
+    // if the pixmap maches one of the physical size dimension
+    // mark as matching requested dpr
+    if (pix.width() == rectPhysical.width() || pix.height() == rectPhysical.height()) {
+        pix.setDevicePixelRatio(m_dpr);
+    }
+
+    // center the pix in the middle of the output pixmap
+    if (pix.height() > pix.width()) {
+        // vertically
+        int pixMiddle = pix.width() / pix.devicePixelRatioF() / 2;
+        painter->drawPixmap(QPoint{rect.width() / 2 - pixMiddle, 0}, pix);
+    } else if (pix.height() < pix.width()) {
+        // horizontally
+        int pixMiddle = pix.height() / pix.devicePixelRatioF() / 2;
+        painter->drawPixmap(QPoint{0, rect.height() / 2 - pixMiddle}, pix);
+    } else {
+        painter->drawPixmap(QPoint{0, 0}, pix);
+    }
 
     if (m_overlays.isEmpty()) {
         return;
@@ -233,10 +247,6 @@ QIcon addOverlays(const QString &iconName, const QStringList &overlays)
 {
     const QIcon icon = QIcon::fromTheme(iconName);
 
-    if (overlays.count() == 0) {
-        return icon;
-    }
-
-    return QIcon(new KOverlayIconEngine(icon, overlays));
+    return addOverlays(icon, overlays);
 }
 }
